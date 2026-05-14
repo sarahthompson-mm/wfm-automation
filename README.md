@@ -33,20 +33,20 @@ The 4-week rotation cycles from **3rd June 2026**. Each agent does one slot per 
 | Slot | Week 1 | Week 2 | Week 3 | Week 4 |
 |------|--------|--------|--------|--------|
 | Wed AM (09:00–13:30) | Tien | Tien | Tien | Tien |
-| Wed PM (13:30–18:00) | Henriett | Jad | Katalin | Krisztina |
+| Wed PM (13:30–18:00) | Jad | Henriett | Jad | Krisztina |
 | Thu AM (10:00–14:30) | Dora | Dora | Dora | Dora |
-| Thu PM (13:30–18:00) | Henriett | Jad | Katalin | Henriett |
-| Fri AM (09:00–13:30) | Katalin | Henriett | Krisztina | Jad |
-| Fri PM (13:30–18:00) | Jad | Krisztina | Henriett | Katalin |
+| Thu PM (13:30–18:00) | Krisztina | Katalin | Henriett | Katalin |
+| Fri AM (09:00–13:30) | Katalin | Henriett | Jad | Krisztina |
+| Fri PM (13:30–18:00) | Henriett | Krisztina | Katalin | Jad |
 
 Weeks 5–8 repeat weeks 1–4. All times are **Europe/Budapest**.
 
 **NWD notes:**
-- Tien and Dora are fixed to their slots every week (no conflicting NWDs on Wed/Thu)
-- Jad has NWDs on Thursdays in odd weeks — rotation accounts for this
-- Krisztina has NWDs on Fridays in odd weeks — rotation accounts for this
-- Katalin has NWDs on Fridays in even weeks — rotation accounts for this
-- Henriett has no NWDs on Wed/Thu/Fri
+- Tien and Dora are fixed to their slots every week (no conflicting NWDs on Wed/Thu/Fri)
+- Jad has NWDs on Thursdays in odd weeks — never scheduled Thu PM in weeks 1 or 3
+- Krisztina has NWDs on Fridays in odd weeks — never scheduled on Fri in weeks 1 or 3
+- Katalin has NWDs on Fridays in even weeks — never scheduled on Fri in weeks 2 or 4
+- Henriett has no NWDs on Wed/Thu/Fri — fully flexible
 
 If an agent is on holiday (not a regular NWD), the script will skip their slot and flag it in the output so the team can arrange cover manually.
 
