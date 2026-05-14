@@ -240,28 +240,38 @@ def find_gaps(activities: list, slot_start_utc: datetime, slot_end_utc: datetime
 def clamp_slot_to_shift(activities: list, slot_start_utc: datetime, slot_end_utc: datetime):
     """
     Clamp the slot window to the agent's actual working hours for that day.
-    Uses Non-working Hours events to find shift start/end boundaries.
-    Returns (clamped_start_utc, clamped_end_utc) or None if shift is too short.
+
+    Uses two signals:
+    1. Non-working Hours events — explicit shift boundary blocks placed by Assembled
+    2. First/last productive event — catches shifts where no NWH block exists at the boundary
+
+    Returns (clamped_start_utc, clamped_end_utc) or None if available window is too short.
     """
     slot_start_ts = int(slot_start_utc.timestamp())
     slot_end_ts   = int(slot_end_utc.timestamp())
 
-    nwh_events = [a for a in activities if a.get("type_name") == SHIFT_BOUNDARY_NAME]
-
     effective_start = slot_start_ts
     effective_end   = slot_end_ts
 
+    # Signal 1: Non-working Hours blocks
+    nwh_events = [a for a in activities if a.get("type_name") == SHIFT_BOUNDARY_NAME]
     for nwh in nwh_events:
         nwh_start = nwh["start_time"]
         nwh_end   = nwh["end_time"]
-
-        # NWH block before/at slot start — shift hasn't started, push slot start forward
         if nwh_end > slot_start_ts and nwh_start <= slot_start_ts:
             effective_start = max(effective_start, nwh_end)
-
-        # NWH block at/after slot end — shift has ended, pull slot end back
         if nwh_start < slot_end_ts and nwh_end >= slot_end_ts:
             effective_end = min(effective_end, nwh_start)
+
+    # Signal 2: First productive event start — catches shifts with no leading NWH block
+    productive_events = [a for a in activities if a.get("productive")]
+    if productive_events:
+        first_productive_start = min(a["start_time"] for a in productive_events)
+        last_productive_end    = max(a["end_time"]   for a in productive_events)
+        # Don't schedule before the first productive event starts
+        effective_start = max(effective_start, first_productive_start)
+        # Don't schedule after the last productive event ends
+        effective_end   = min(effective_end,   last_productive_end)
 
     available_mins = (effective_end - effective_start) // 60
     if available_mins < MIN_SLOT_MINUTES:
