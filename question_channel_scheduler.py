@@ -5,13 +5,12 @@ Run after schedule generation to fill gaps in agents' schedules with
 Question Channel events, based on the 4-week rotation.
 
 Usage:
-    ASSEMBLED_API_KEY=xxx WEEK_START_DATE=2026-06-03 python question_channel_scheduler.py
-
-The WEEK_START_DATE must be a Wednesday (the start of the Question Channel week).
+    ASSEMBLED_API_KEY=xxx START_DATE=2026-06-03 END_DATE=2026-06-30 python question_channel_scheduler.py
 
 Environment variables:
     ASSEMBLED_API_KEY  — required, Assembled API key (sk_live_...)
-    WEEK_START_DATE    — required, the Wednesday to schedule for (YYYY-MM-DD)
+    START_DATE         — required, first Wednesday to schedule from (YYYY-MM-DD)
+    END_DATE           — required, last date to schedule up to, inclusive (YYYY-MM-DD)
 """
 
 import os
@@ -24,9 +23,14 @@ import pytz
 # CONFIG
 # ──────────────────────────────────────────────
 
-API_KEY  = os.environ["ASSEMBLED_API_KEY"]
-BASE_URL = "https://api.assembledhq.com"
-BUDAPEST = pytz.timezone("Europe/Budapest")
+API_KEY     = os.environ["ASSEMBLED_API_KEY"]
+BASE_URL    = "https://api.assembledhq.com"
+BUDAPEST    = pytz.timezone("Europe/Budapest")
+
+# Assembled schedule ID — update this if the schedule changes.
+# Found in the URL when viewing the schedule in Assembled.
+# To use the master schedule instead, set this to None.
+SCHEDULE_ID = "ce63792c-57e1-41ac-85a5-9f09b230c791"
 
 QUESTION_CHANNEL_TYPE_ID = "d421c903-4ac6-4c40-ae21-00b00c6a79c2"
 
@@ -100,6 +104,18 @@ def get_week_number(week_start: datetime) -> int:
     return (weeks_since % 4) + 1
 
 
+def get_wednesdays_in_range(start: datetime, end: datetime):
+    """Return all Wednesdays between start and end dates inclusive."""
+    wednesdays = []
+    # Find the first Wednesday on or after start
+    days_until_wednesday = (2 - start.weekday()) % 7
+    current = start + timedelta(days=days_until_wednesday)
+    while current.date() <= end.date():
+        wednesdays.append(current)
+        current += timedelta(weeks=1)
+    return wednesdays
+
+
 def slot_times(slot_type: str, date: datetime):
     """Return (start_utc, end_utc) for a slot on a given date."""
     if slot_type == "dora_am":
@@ -127,16 +143,20 @@ def get_agent_schedule(agent_id: str, date: datetime):
     start_ts = int(start_local.astimezone(timezone.utc).timestamp())
     end_ts   = int(end_local.astimezone(timezone.utc).timestamp())
 
+    params = {
+        "agents":                 agent_id,
+        "start_time":             start_ts,
+        "end_time":               end_ts,
+        "return_full_schedule":   "true",
+        "include_activity_types": "true",
+    }
+    if SCHEDULE_ID:
+        params["schedule_id"] = SCHEDULE_ID
+
     resp = requests.get(
         f"{BASE_URL}/v0/activities",
         auth=(API_KEY, ""),
-        params={
-            "agents":                 agent_id,
-            "start_time":             start_ts,
-            "end_time":               end_ts,
-            "return_full_schedule":   "true",  # All layers, not just flattened
-            "include_activity_types": "true",  # So we can detect time off by name
-        }
+        params=params,
     )
     resp.raise_for_status()
     data = resp.json()
@@ -174,13 +194,12 @@ def check_time_off(activities: list, slot_start_utc: datetime, slot_end_utc: dat
 
 def find_gaps(activities: list, slot_start_utc: datetime, slot_end_utc: datetime):
     """
-    Find all gaps (empty time) within the slot window not covered by any existing event.
+    Find all gaps within the slot window not covered by any existing event.
     Returns a list of (gap_start_ts, gap_end_ts) tuples as UTC unix timestamps.
     """
     slot_start_ts = int(slot_start_utc.timestamp())
     slot_end_ts   = int(slot_end_utc.timestamp())
 
-    # Get activities that overlap the slot window
     overlapping = [
         a for a in activities
         if a["end_time"] > slot_start_ts and a["start_time"] < slot_end_ts
@@ -193,17 +212,14 @@ def find_gaps(activities: list, slot_start_utc: datetime, slot_end_utc: datetime
     for activity in overlapping:
         act_start = activity["start_time"]
         act_end   = activity["end_time"]
-
         if act_start > cursor:
             gaps.append((cursor, act_start))
-
         cursor = max(cursor, act_end)
 
-    # Any remaining time after the last activity
     if cursor < slot_end_ts:
         gaps.append((cursor, slot_end_ts))
 
-    # Drop tiny gaps under 1 minute (rounding artefacts)
+    # Drop tiny gaps under 1 minute
     return [(s, e) for s, e in gaps if e - s >= 60]
 
 
@@ -216,6 +232,9 @@ def create_event(agent_id: str, start_ts: int, end_ts: int):
         "end_time":   end_ts,
         # allow_conflicts defaults to False — we only fill gaps, never overlap
     }
+    if SCHEDULE_ID:
+        payload["schedule_id"] = SCHEDULE_ID
+
     resp = requests.post(
         f"{BASE_URL}/v0/activities",
         auth=(API_KEY, ""),
@@ -230,90 +249,115 @@ def create_event(agent_id: str, start_ts: int, end_ts: int):
 # ──────────────────────────────────────────────
 
 def main():
-    week_start_str = os.environ.get("WEEK_START_DATE")
-    if not week_start_str:
-        print("ERROR: WEEK_START_DATE environment variable is required (YYYY-MM-DD)")
+    start_str = os.environ.get("START_DATE")
+    end_str   = os.environ.get("END_DATE")
+
+    if not start_str or not end_str:
+        print("ERROR: START_DATE and END_DATE environment variables are required (YYYY-MM-DD)")
         sys.exit(1)
 
-    week_start = BUDAPEST.localize(datetime.strptime(week_start_str, "%Y-%m-%d"))
+    start_date = BUDAPEST.localize(datetime.strptime(start_str, "%Y-%m-%d"))
+    end_date   = BUDAPEST.localize(datetime.strptime(end_str,   "%Y-%m-%d"))
 
-    if week_start.weekday() != 2:  # 2 = Wednesday
-        print(f"ERROR: {week_start_str} is not a Wednesday!")
+    if start_date > end_date:
+        print("ERROR: START_DATE must be before or equal to END_DATE")
         sys.exit(1)
 
-    week_num = get_week_number(week_start)
-    print(f"Processing week starting {week_start_str} (Week {week_num} of 4-week cycle)")
+    wednesdays = get_wednesdays_in_range(start_date, end_date)
+
+    if not wednesdays:
+        print(f"No Wednesdays found between {start_str} and {end_str}")
+        sys.exit(0)
+
+    schedule_label = f"schedule {SCHEDULE_ID}" if SCHEDULE_ID else "master schedule"
+    print(f"Scheduling {len(wednesdays)} week(s) from {start_str} to {end_str}")
+    print(f"Target: {schedule_label}")
     print("=" * 60)
 
-    skipped = []  # Track skipped slots for summary
+    all_skipped = []
 
-    rotation_week = ROTATION[week_num]
+    for week_start in wednesdays:
+        week_num = get_week_number(week_start)
+        print(f"\n{'=' * 60}")
+        print(f"Week of {week_start.strftime('%d %b %Y')} — Rotation week {week_num}")
+        print("=" * 60)
 
-    # day_offset: 0=Wed, 1=Thu, 2=Fri
-    for day_offset, slots in rotation_week.items():
-        date = week_start + timedelta(days=day_offset)
-        day_name = ["Wednesday", "Thursday", "Friday"][day_offset]
-        print(f"\n── {day_name} {date.strftime('%d %b %Y')} ──")
+        skipped = []
+        rotation_week = ROTATION[week_num]
 
-        for agent_name, slot_type in slots:
-            agent_id = AGENTS[agent_name]
-            slot_start_utc, slot_end_utc = slot_times(slot_type, date)
-            slot_start_local = slot_start_utc.astimezone(BUDAPEST)
-            slot_end_local   = slot_end_utc.astimezone(BUDAPEST)
+        # day_offset: 0=Wed, 1=Thu, 2=Fri
+        for day_offset, slots in rotation_week.items():
+            date = week_start + timedelta(days=day_offset)
+            day_name = ["Wednesday", "Thursday", "Friday"][day_offset]
 
-            print(f"\n  {agent_name} | {slot_type.upper()} | "
-                  f"{slot_start_local.strftime('%H:%M')}–{slot_end_local.strftime('%H:%M')} Budapest")
-
-            # Fetch agent's schedule for the day
-            try:
-                activities = get_agent_schedule(agent_id, date)
-            except requests.HTTPError as e:
-                print(f"    ⚠ ERROR fetching schedule: {e}")
-                skipped.append({
-                    "agent":  agent_name,
-                    "date":   date.strftime("%a %d %b"),
-                    "slot":   slot_type.upper(),
-                    "reason": f"API error fetching schedule: {e}",
-                })
+            # Skip if this day is outside our date range
+            if date.date() > end_date.date():
                 continue
 
-            # Check if agent is on time off — skip if so
-            time_off_reason = check_time_off(activities, slot_start_utc, slot_end_utc)
-            if time_off_reason:
-                print(f"    ⏭ SKIPPED — {agent_name} is on {time_off_reason}")
-                skipped.append({
-                    "agent":  agent_name,
-                    "date":   date.strftime("%a %d %b"),
-                    "slot":   slot_type.upper(),
-                    "reason": time_off_reason,
-                })
-                continue
+            print(f"\n── {day_name} {date.strftime('%d %b %Y')} ──")
 
-            # Find gaps in the slot window and fill them
-            gaps = find_gaps(activities, slot_start_utc, slot_end_utc)
+            for agent_name, slot_type in slots:
+                agent_id = AGENTS[agent_name]
+                slot_start_utc, slot_end_utc = slot_times(slot_type, date)
+                slot_start_local = slot_start_utc.astimezone(BUDAPEST)
+                slot_end_local   = slot_end_utc.astimezone(BUDAPEST)
 
-            if not gaps:
-                print(f"    ✓ No gaps to fill — slot already fully covered")
-                continue
+                print(f"\n  {agent_name} | {slot_type.upper()} | "
+                      f"{slot_start_local.strftime('%H:%M')}–{slot_end_local.strftime('%H:%M')} Budapest")
 
-            for gap_start_ts, gap_end_ts in gaps:
-                gap_start_local = datetime.fromtimestamp(gap_start_ts, tz=BUDAPEST)
-                gap_end_local   = datetime.fromtimestamp(gap_end_ts,   tz=BUDAPEST)
-                duration_mins   = (gap_end_ts - gap_start_ts) // 60
-                print(f"    → Filling gap: {gap_start_local.strftime('%H:%M')}–"
-                      f"{gap_end_local.strftime('%H:%M')} ({duration_mins} mins)")
-
+                # Fetch agent's schedule for the day
                 try:
-                    create_event(agent_id, gap_start_ts, gap_end_ts)
-                    print(f"      ✓ Created")
+                    activities = get_agent_schedule(agent_id, date)
                 except requests.HTTPError as e:
-                    print(f"      ✗ ERROR creating event: {e} — {e.response.text}")
+                    print(f"    ⚠ ERROR fetching schedule: {e}")
+                    skipped.append({
+                        "agent":  agent_name,
+                        "date":   date.strftime("%a %d %b"),
+                        "slot":   slot_type.upper(),
+                        "reason": f"API error: {e}",
+                    })
+                    continue
 
-    # ── Summary ──
-    print("\n" + "=" * 60)
-    if skipped:
-        print(f"\n⚠ {len(skipped)} slot(s) skipped — manual cover needed:\n")
-        for s in skipped:
+                # Check for time off — skip if found
+                time_off_reason = check_time_off(activities, slot_start_utc, slot_end_utc)
+                if time_off_reason:
+                    print(f"    ⏭ SKIPPED — {agent_name} is on {time_off_reason}")
+                    skipped.append({
+                        "agent":  agent_name,
+                        "date":   date.strftime("%a %d %b"),
+                        "slot":   slot_type.upper(),
+                        "reason": time_off_reason,
+                    })
+                    continue
+
+                # Find and fill gaps
+                gaps = find_gaps(activities, slot_start_utc, slot_end_utc)
+
+                if not gaps:
+                    print(f"    ✓ No gaps to fill — slot already fully covered")
+                    continue
+
+                for gap_start_ts, gap_end_ts in gaps:
+                    gap_start_local = datetime.fromtimestamp(gap_start_ts, tz=BUDAPEST)
+                    gap_end_local   = datetime.fromtimestamp(gap_end_ts,   tz=BUDAPEST)
+                    duration_mins   = (gap_end_ts - gap_start_ts) // 60
+                    print(f"    → Filling gap: {gap_start_local.strftime('%H:%M')}–"
+                          f"{gap_end_local.strftime('%H:%M')} ({duration_mins} mins)")
+
+                    try:
+                        create_event(agent_id, gap_start_ts, gap_end_ts)
+                        print(f"      ✓ Created")
+                    except requests.HTTPError as e:
+                        print(f"      ✗ ERROR: {e} — {e.response.text}")
+
+        all_skipped.extend(skipped)
+
+    # ── Final summary ──
+    print(f"\n{'=' * 60}")
+    print(f"SUMMARY — {len(wednesdays)} week(s) processed")
+    if all_skipped:
+        print(f"\n⚠ {len(all_skipped)} slot(s) skipped — manual cover needed:\n")
+        for s in all_skipped:
             print(f"  • {s['date']} | {s['agent']} ({s['slot']}) — {s['reason']}")
         print()
     else:
