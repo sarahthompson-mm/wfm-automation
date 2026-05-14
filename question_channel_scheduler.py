@@ -41,8 +41,11 @@ TIME_OFF_TYPE_NAMES = {
     "Sick And Medical",
     "Time Off",
     "Cops Non-Working Days",
-    "Non-working Hours",
 }
+
+# Events that define shift boundaries — used to clamp slot windows to actual working hours
+SHIFT_BOUNDARY_NAME = "Non-working Hours"
+MIN_SLOT_MINUTES = 30  # Don't book if the available window is shorter than this
 
 # Agent IDs
 AGENTS = {
@@ -161,14 +164,19 @@ def get_agent_schedule(agent_id: str, date: datetime):
     resp.raise_for_status()
     data = resp.json()
 
-    # Build type_id -> type_name lookup from the response
+    # Build type_id -> type info lookup from the response
     activity_types = data.get("activity_types", {})
-    type_name_lookup = {tid: t.get("name", "") for tid, t in activity_types.items()}
+    type_info_lookup = {
+        tid: {"name": t.get("name", ""), "productive": t.get("productive", False)}
+        for tid, t in activity_types.items()
+    }
 
-    # Attach type_name to each activity for easy checking
+    # Attach type_name and productive flag to each activity
     activities = list(data.get("activities", {}).values())
     for a in activities:
-        a["type_name"] = type_name_lookup.get(a.get("type_id", ""), "Unknown")
+        info = type_info_lookup.get(a.get("type_id", ""), {})
+        a["type_name"]  = info.get("name", "Unknown")
+        a["productive"] = info.get("productive", False)
 
     return activities
 
@@ -200,9 +208,15 @@ def find_gaps(activities: list, slot_start_utc: datetime, slot_end_utc: datetime
     slot_start_ts = int(slot_start_utc.timestamp())
     slot_end_ts   = int(slot_end_utc.timestamp())
 
+    # Only consider non-productive events as blockers (breaks, lunch, focus time etc.)
+    # Productive events (Chat, Email etc.) sit in a different layer and should be ignored —
+    # Question Channel fills the gaps between default events, not around productive ones.
     overlapping = [
         a for a in activities
-        if a["end_time"] > slot_start_ts and a["start_time"] < slot_end_ts
+        if a["end_time"] > slot_start_ts
+        and a["start_time"] < slot_end_ts
+        and not a.get("productive", False)
+        and a.get("type_name") not in TIME_OFF_TYPE_NAMES  # Don't treat time off as a gap blocker either
     ]
     overlapping.sort(key=lambda a: a["start_time"])
 
@@ -221,6 +235,42 @@ def find_gaps(activities: list, slot_start_utc: datetime, slot_end_utc: datetime
 
     # Drop tiny gaps under 1 minute
     return [(s, e) for s, e in gaps if e - s >= 60]
+
+
+def clamp_slot_to_shift(activities: list, slot_start_utc: datetime, slot_end_utc: datetime):
+    """
+    Clamp the slot window to the agent's actual working hours for that day.
+    Uses Non-working Hours events to find shift start/end boundaries.
+    Returns (clamped_start_utc, clamped_end_utc) or None if shift is too short.
+    """
+    slot_start_ts = int(slot_start_utc.timestamp())
+    slot_end_ts   = int(slot_end_utc.timestamp())
+
+    nwh_events = [a for a in activities if a.get("type_name") == SHIFT_BOUNDARY_NAME]
+
+    effective_start = slot_start_ts
+    effective_end   = slot_end_ts
+
+    for nwh in nwh_events:
+        nwh_start = nwh["start_time"]
+        nwh_end   = nwh["end_time"]
+
+        # NWH block before/at slot start — shift hasn't started, push slot start forward
+        if nwh_end > slot_start_ts and nwh_start <= slot_start_ts:
+            effective_start = max(effective_start, nwh_end)
+
+        # NWH block at/after slot end — shift has ended, pull slot end back
+        if nwh_start < slot_end_ts and nwh_end >= slot_end_ts:
+            effective_end = min(effective_end, nwh_start)
+
+    available_mins = (effective_end - effective_start) // 60
+    if available_mins < MIN_SLOT_MINUTES:
+        return None
+
+    return (
+        datetime.fromtimestamp(effective_start, tz=timezone.utc),
+        datetime.fromtimestamp(effective_end,   tz=timezone.utc),
+    )
 
 
 def create_event(agent_id: str, start_ts: int, end_ts: int):
@@ -329,6 +379,23 @@ def main():
                         "reason": time_off_reason,
                     })
                     continue
+
+                # Clamp slot to actual shift hours
+                clamped = clamp_slot_to_shift(activities, slot_start_utc, slot_end_utc)
+                if clamped is None:
+                    print(f"    ⏭ SKIPPED — {agent_name} shift too short for this slot")
+                    skipped.append({
+                        "agent":  agent_name,
+                        "date":   date.strftime("%a %d %b"),
+                        "slot":   slot_type.upper(),
+                        "reason": "Shift too short for slot window",
+                    })
+                    continue
+
+                slot_start_utc, slot_end_utc = clamped
+                slot_start_local = slot_start_utc.astimezone(BUDAPEST)
+                slot_end_local   = slot_end_utc.astimezone(BUDAPEST)
+                print(f"    ↳ Effective window: {slot_start_local.strftime('%H:%M')}–{slot_end_local.strftime('%H:%M')} Budapest")
 
                 # Find and fill gaps
                 gaps = find_gaps(activities, slot_start_utc, slot_end_utc)
