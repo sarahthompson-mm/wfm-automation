@@ -1,0 +1,30 @@
+name: Schedule Question Channel Events
+
+on:
+  workflow_dispatch:
+    inputs:
+      week_start_date:
+        description: 'Start date of the week to schedule (YYYY-MM-DD, must be a Wednesday)'
+        required: true
+        type: string
+
+jobs:
+  schedule-question-channel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests pytz
+
+      - name: Run scheduler
+        env:
+          ASSEMBLED_API_KEY: ${{ secrets.ASSEMBLED_API_KEY }}
+          WEEK_START_DATE: ${{ inputs.week_start_date }}
+        run: python question_channel_scheduler.py
