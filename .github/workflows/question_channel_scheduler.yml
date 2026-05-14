@@ -3,8 +3,12 @@ name: Schedule Question Channel Events
 on:
   workflow_dispatch:
     inputs:
-      week_start_date:
-        description: 'Start date of the week to schedule (YYYY-MM-DD, must be a Wednesday)'
+      start_date:
+        description: 'First Wednesday to schedule from (YYYY-MM-DD)'
+        required: true
+        type: string
+      end_date:
+        description: 'Last date to schedule up to (YYYY-MM-DD, inclusive)'
         required: true
         type: string
 
@@ -26,5 +30,6 @@ jobs:
       - name: Run scheduler
         env:
           ASSEMBLED_API_KEY: ${{ secrets.ASSEMBLED_API_KEY }}
-          WEEK_START_DATE: ${{ inputs.week_start_date }}
+          START_DATE: ${{ inputs.start_date }}
+          END_DATE: ${{ inputs.end_date }}
         run: python question_channel_scheduler.py
