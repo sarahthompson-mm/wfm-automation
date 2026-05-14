@@ -71,24 +71,24 @@ PM_END     = (18, 0)
 # Days: 0=Wed, 1=Thu, 2=Fri
 ROTATION = {
     1: {  # Week 1
-        0: [("Tien", "am"),      ("Henriett", "pm")],   # Wed
-        1: [("Dora", "dora_am"), ("Henriett", "pm")],   # Thu
-        2: [("Katalin", "am"),   ("Jad", "pm")],        # Fri
+        0: [("Tien", "am"),      ("Jad", "pm")],        # Wed
+        1: [("Dora", "dora_am"), ("Krisztina", "pm")],  # Thu
+        2: [("Katalin", "am"),   ("Henriett", "pm")],   # Fri
     },
     2: {  # Week 2
-        0: [("Tien", "am"),      ("Jad", "pm")],        # Wed
-        1: [("Dora", "dora_am"), ("Jad", "pm")],        # Thu
+        0: [("Tien", "am"),      ("Henriett", "pm")],   # Wed
+        1: [("Dora", "dora_am"), ("Katalin", "pm")],    # Thu
         2: [("Henriett", "am"),  ("Krisztina", "pm")],  # Fri
     },
     3: {  # Week 3
-        0: [("Tien", "am"),      ("Katalin", "pm")],    # Wed
-        1: [("Dora", "dora_am"), ("Katalin", "pm")],    # Thu
-        2: [("Krisztina", "am"), ("Henriett", "pm")],   # Fri
+        0: [("Tien", "am"),      ("Jad", "pm")],        # Wed
+        1: [("Dora", "dora_am"), ("Henriett", "pm")],   # Thu
+        2: [("Jad", "am"),       ("Katalin", "pm")],    # Fri
     },
     4: {  # Week 4
         0: [("Tien", "am"),      ("Krisztina", "pm")],  # Wed
-        1: [("Dora", "dora_am"), ("Henriett", "pm")],   # Thu
-        2: [("Jad", "am"),       ("Katalin", "pm")],    # Fri
+        1: [("Dora", "dora_am"), ("Katalin", "pm")],    # Thu
+        2: [("Krisztina", "am"), ("Jad", "pm")],        # Fri
     },
 }
 
@@ -365,6 +365,21 @@ def main():
                         "date":   date.strftime("%a %d %b"),
                         "slot":   slot_type.upper(),
                         "reason": f"API error: {e}",
+                    })
+                    continue
+
+                # Check if agent has any schedule at all — if the day is empty, skip
+                has_any_schedule = any(
+                    a.get("productive") or a.get("type_name") == SHIFT_BOUNDARY_NAME
+                    for a in activities
+                )
+                if not has_any_schedule:
+                    print(f"    ⏭ SKIPPED — {agent_name} has no schedule this day")
+                    skipped.append({
+                        "agent":  agent_name,
+                        "date":   date.strftime("%a %d %b"),
+                        "slot":   slot_type.upper(),
+                        "reason": "No schedule this day",
                     })
                     continue
 
