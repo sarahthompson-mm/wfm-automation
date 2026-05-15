@@ -1,0 +1,35 @@
+name: Schedule Total Loss Events
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: 'First date to schedule from (DD/MM/YYYY)'
+        required: true
+        type: string
+      end_date:
+        description: 'Last date to schedule up to (DD/MM/YYYY, inclusive)'
+        required: true
+        type: string
+
+jobs:
+  schedule-total-loss:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests pytz
+
+      - name: Run Total Loss scheduler
+        env:
+          ASSEMBLED_API_KEY: ${{ secrets.ASSEMBLED_API_KEY }}
+          START_DATE: ${{ inputs.start_date }}
+          END_DATE: ${{ inputs.end_date }}
+        run: python total_loss_scheduler.py
