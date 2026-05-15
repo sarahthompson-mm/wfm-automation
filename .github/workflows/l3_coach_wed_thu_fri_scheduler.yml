@@ -1,0 +1,54 @@
+name: L3 Coach Wed/Thu/Fri Scheduler
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: 'Start date (DD/MM/YYYY)'
+        required: true
+      end_date:
+        description: 'End date (DD/MM/YYYY)'
+        required: true
+      dry_run:
+        description: 'Dry run? (yes = preview only, no = live)'
+        required: true
+        default: 'yes'
+        type: choice
+        options:
+          - 'yes'
+          - 'no'
+
+jobs:
+  schedule-l3-wed-thu-fri:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run scheduler (dry run)
+        if: ${{ github.event.inputs.dry_run == 'yes' }}
+        env:
+          ASSEMBLED_API_KEY: ${{ secrets.ASSEMBLED_API_KEY }}
+        run: |
+          python l3_coach_wed_thu_fri_scheduler.py \
+            ${{ github.event.inputs.start_date }} \
+            ${{ github.event.inputs.end_date }} \
+            --dry-run
+
+      - name: Run scheduler (live)
+        if: ${{ github.event.inputs.dry_run == 'no' }}
+        env:
+          ASSEMBLED_API_KEY: ${{ secrets.ASSEMBLED_API_KEY }}
+        run: |
+          echo "yes" | python l3_coach_wed_thu_fri_scheduler.py \
+            ${{ github.event.inputs.start_date }} \
+            ${{ github.event.inputs.end_date }}
