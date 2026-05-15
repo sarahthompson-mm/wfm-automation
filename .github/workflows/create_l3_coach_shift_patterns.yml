@@ -1,0 +1,41 @@
+name: Create L3 Coach Shift Patterns (ONE-OFF)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run? (yes = preview only, no = create for real)'
+        required: true
+        default: 'yes'
+        type: choice
+        options:
+          - 'yes'
+          - 'no'
+
+jobs:
+  create-shift-patterns:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run script (dry run)
+        if: ${{ github.event.inputs.dry_run == 'yes' }}
+        env:
+          ASSEMBLED_API_KEY: ${{ secrets.ASSEMBLED_API_KEY }}
+        run: python create_l3_coach_shift_patterns.py --dry-run
+
+      - name: Run script (live)
+        if: ${{ github.event.inputs.dry_run == 'no' }}
+        env:
+          ASSEMBLED_API_KEY: ${{ secrets.ASSEMBLED_API_KEY }}
+        run: echo "yes" | python create_l3_coach_shift_patterns.py
