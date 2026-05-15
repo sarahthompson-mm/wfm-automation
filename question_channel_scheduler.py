@@ -4,13 +4,16 @@ Question Channel Scheduler
 Run after schedule generation to fill gaps in agents' schedules with
 Question Channel events, based on the 4-week rotation.
 
+Rotation config is shared via rotation.py — update that file if agents
+or the rotation changes.
+
 Usage:
-    ASSEMBLED_API_KEY=xxx START_DATE=2026-06-03 END_DATE=2026-06-30 python question_channel_scheduler.py
+    ASSEMBLED_API_KEY=xxx START_DATE=03/06/2026 END_DATE=30/06/2026 python question_channel_scheduler.py
 
 Environment variables:
     ASSEMBLED_API_KEY  — required, Assembled API key (sk_live_...)
-    START_DATE         — required, first Wednesday to schedule from (YYYY-MM-DD)
-    END_DATE           — required, last date to schedule up to, inclusive (YYYY-MM-DD)
+    START_DATE         — required, first date to schedule from (DD/MM/YYYY)
+    END_DATE           — required, last date to schedule up to, inclusive (DD/MM/YYYY)
 """
 
 import os
@@ -19,13 +22,14 @@ import requests
 from datetime import datetime, timedelta, timezone
 import pytz
 
+from rotation import AGENTS, BUDAPEST, WEEK_1_ANCHOR, QC_ROTATION
+
 # ──────────────────────────────────────────────
 # CONFIG
 # ──────────────────────────────────────────────
 
-API_KEY     = os.environ["ASSEMBLED_API_KEY"]
-BASE_URL    = "https://api.assembledhq.com"
-BUDAPEST    = pytz.timezone("Europe/Budapest")
+API_KEY  = os.environ["ASSEMBLED_API_KEY"]
+BASE_URL = "https://api.assembledhq.com"
 
 # Assembled schedule ID — update this if the schedule changes.
 # Found in the URL when viewing the schedule in Assembled.
@@ -35,7 +39,6 @@ SCHEDULE_ID = "ce63792c-57e1-41ac-85a5-9f09b230c791"
 QUESTION_CHANNEL_TYPE_ID = "d421c903-4ac6-4c40-ae21-00b00c6a79c2"
 
 # Time off type names — any activity matching these will cause the slot to be skipped.
-# Add or remove names here if your Assembled account uses different labels.
 TIME_OFF_TYPE_NAMES = {
     "Holiday",
     "Sick And Medical",
@@ -43,19 +46,9 @@ TIME_OFF_TYPE_NAMES = {
     "Cops Non-Working Days",
 }
 
-# Events that define shift boundaries — used to clamp slot windows to actual working hours
+# Events that define shift boundaries
 SHIFT_BOUNDARY_NAME = "Non-working Hours"
-MIN_SLOT_MINUTES = 30  # Don't book if the available window is shorter than this
-
-# Agent IDs
-AGENTS = {
-    "Tien":      "8ffbdc6b-8404-43c2-bd2c-da5577260e27",
-    "Dora":      "a904049d-524a-45d0-9492-935be9091c59",
-    "Henriett":  "1d9e4692-7388-47be-9df1-c9a7bcd1a6cf",
-    "Jad":       "109bd604-1e51-4fe4-b653-0002bab43911",
-    "Katalin":   "5bea70c6-04e4-41d3-9640-1fb53a4e4015",
-    "Krisztina": "b8701026-bd7f-4a18-9856-dd67a9d480fa",
-}
+MIN_SLOT_MINUTES = 30
 
 # Slot times in Budapest time (hour, minute)
 AM_START   = (9, 0)
@@ -65,35 +58,8 @@ DORA_END   = (14, 30)
 PM_START   = (13, 30)
 PM_END     = (18, 0)
 
-# 4-week rotation
-# Each entry: (agent_name, slot_type)
-# slot_type: "am", "dora_am", or "pm"
-# Days: 0=Wed, 1=Thu, 2=Fri
-ROTATION = {
-    1: {  # Week 1
-        0: [("Tien", "am"),      ("Jad", "pm")],        # Wed
-        1: [("Dora", "dora_am"), ("Krisztina", "pm")],  # Thu
-        2: [("Katalin", "am"),   ("Henriett", "pm")],   # Fri
-    },
-    2: {  # Week 2
-        0: [("Tien", "am"),      ("Henriett", "pm")],   # Wed
-        1: [("Dora", "dora_am"), ("Katalin", "pm")],    # Thu
-        2: [("Henriett", "am"),  ("Krisztina", "pm")],  # Fri
-    },
-    3: {  # Week 3
-        0: [("Tien", "am"),      ("Jad", "pm")],        # Wed
-        1: [("Dora", "dora_am"), ("Henriett", "pm")],   # Thu
-        2: [("Jad", "am"),       ("Katalin", "pm")],    # Fri
-    },
-    4: {  # Week 4
-        0: [("Tien", "am"),      ("Krisztina", "pm")],  # Wed
-        1: [("Dora", "dora_am"), ("Katalin", "pm")],    # Thu
-        2: [("Krisztina", "am"), ("Jad", "pm")],        # Fri
-    },
-}
-
-# Week 1 anchor date (must be a Wednesday)
-WEEK_1_ANCHOR = datetime(2026, 6, 3, tzinfo=BUDAPEST)
+# Use rotation from shared rotation.py
+ROTATION = QC_ROTATION
 
 
 # ──────────────────────────────────────────────
@@ -316,8 +282,17 @@ def main():
         print("ERROR: START_DATE and END_DATE environment variables are required (YYYY-MM-DD)")
         sys.exit(1)
 
-    start_date = BUDAPEST.localize(datetime.strptime(start_str, "%Y-%m-%d"))
-    end_date   = BUDAPEST.localize(datetime.strptime(end_str,   "%Y-%m-%d"))
+    # Accept both DD/MM/YYYY and YYYY-MM-DD formats
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            start_date = BUDAPEST.localize(datetime.strptime(start_str, fmt))
+            end_date   = BUDAPEST.localize(datetime.strptime(end_str,   fmt))
+            break
+        except ValueError:
+            continue
+    else:
+        print("ERROR: Dates must be in DD/MM/YYYY or YYYY-MM-DD format")
+        sys.exit(1)
 
     if start_date > end_date:
         print("ERROR: START_DATE must be before or equal to END_DATE")
