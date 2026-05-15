@@ -224,20 +224,16 @@ def schedule_end_of_shift_esc(agent_id, agent_name, d, dry_run):
     print(f"    → ESC (end of shift) {start_local}–{end_local} Budapest")
     create_activity(agent_id, ESC_EVENT_TYPE_ID, esc_start_ts, esc_end_ts, dry_run)
 
-def pick_allday_esc_agent(exclude_name, d, dry_run, already_used=None):
-    """
-    Pick the agent (excluding the late agent and anyone already used this run)
-    who did all-day ESC least recently. Returns (name, agent_id).
-    """
-    already_used = already_used or set()
+def build_candidates(exclude_name, d, dry_run, skip_names=None):
+    """Build a sorted list of available candidates, excluding exclude_name and skip_names."""
+    skip_names = skip_names or set()
     candidates = []
     for name, agent_id in AGENTS.items():
         if name == exclude_name:
             continue
-        if name in already_used:
+        if name in skip_names:
             print(f"      {name}: already done all-day ESC this run — skipping")
             continue
-        # Skip agents on holiday
         activities = get_agent_activities(agent_id, d)
         if is_on_holiday(activities):
             print(f"      {name}: on holiday — skipping")
@@ -245,21 +241,42 @@ def pick_allday_esc_agent(exclude_name, d, dry_run, already_used=None):
         if not dry_run:
             last = get_last_allday_esc_date(agent_id, d)
         else:
-            last = None  # in dry run, treat all as equal
+            last = None
         candidates.append((name, agent_id, last))
         if last:
             print(f"      {name}: last all-day ESC {last.strftime('%d %b %Y')}")
         else:
             print(f"      {name}: no recent all-day ESC history")
+    candidates.sort(key=lambda x: x[2] or date.min)
+    return candidates
+
+
+def pick_allday_esc_agent(exclude_name, d, dry_run, already_used=None):
+    """
+    Pick the agent who did all-day ESC least recently, excluding:
+    - the late agent
+    - anyone already used this Mon/Tue pair
+    If everyone has been used this run, reset and pick from full pool
+    (least recent historically). Returns (name, agent_id, already_used).
+    """
+    already_used = already_used or set()
+
+    # First pass: exclude already used this run
+    candidates = build_candidates(exclude_name, d, dry_run, skip_names=already_used)
 
     if not candidates:
-        print(f"    ⚠ No available agents for all-day ESC — everyone on holiday or short shift!")
-        return None, None
+        # Everyone's been used — reset and try full pool (holidays still excluded)
+        print(f"    ↺ All agents used this run — resetting and picking from full pool")
+        already_used = set()
+        candidates = build_candidates(exclude_name, d, dry_run, skip_names=already_used)
 
-    # Sort: no history first, then oldest first
-    candidates.sort(key=lambda x: x[2] or date.min)
+    if not candidates:
+        print(f"    ⚠ No available agents for all-day ESC — everyone on holiday!")
+        return None, None, already_used
+
     chosen_name, chosen_id, _ = candidates[0]
-    return chosen_name, chosen_id
+    already_used.add(chosen_name)
+    return chosen_name, chosen_id, already_used
 
 # ---------------------------------------------------------------------------
 # DATE HELPERS
@@ -308,9 +325,12 @@ def main():
     days = get_mon_tue_in_range(start_date, end_date)
     print(f"\nProcessing {len(days)} Mon/Tue day(s)...\n")
 
-    already_used_allday_esc = set()  # track who's done all-day ESC this run
+    already_used_allday_esc = set()  # resets each Monday, persists Mon→Tue
 
     for d, day_label in days:
+        # Reset the used set each Monday so we get a fresh pair each week
+        if day_label == "mon":
+            already_used_allday_esc = set()
         week_num = get_cycle_week(d)
         day_name = "Monday" if day_label == "mon" else "Tuesday"
         print(f"── {day_name} {d.strftime('%d %b %Y')} (cycle week {week_num}) ──")
@@ -347,13 +367,12 @@ def main():
 
         # 3. All-day ESC agent (least recent, not the late agent)
         print(f"\n  [3] Picking all-day ESC agent (excluding {late_name}):")
-        allday_name, allday_id = pick_allday_esc_agent(late_name, d, dry_run, already_used_allday_esc)
+        allday_name, allday_id, already_used_allday_esc = pick_allday_esc_agent(late_name, d, dry_run, already_used_allday_esc)
         if allday_name is None:
             print(f"  ⚠ No all-day ESC agent available today — skipping")
             print()
             continue
         print(f"  All-day ESC agent: {allday_name}")
-        already_used_allday_esc.add(allday_name)
 
         allday_activities = get_agent_activities(allday_id, d)
 
