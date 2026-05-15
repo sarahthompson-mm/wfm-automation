@@ -175,52 +175,28 @@ def get_gaps(activities, day_start_ts, day_end_ts, min_gap_mins=5):
 
     return gaps
 
-def get_shift_bounds(activities, d):
-    """
-    Return (shift_start_ts, shift_end_ts) based on the earliest and latest
-    activity on the day. Falls back to 09:00-18:00 Budapest if no activities
-    or if derived bounds look nonsensical (e.g. dodgy GCal events bleeding
-    into midnight). Valid shift: start 06:00-14:00, end 14:00-23:00 Budapest.
-    """
-    default_start = datetime(d.year, d.month, d.day, 9, 0, tzinfo=BUDAPEST)
-    default_end   = datetime(d.year, d.month, d.day, 18, 0, tzinfo=BUDAPEST)
-
-    if not activities:
-        return int(default_start.timestamp()), int(default_end.timestamp())
-
-    # Check for holiday: any single event >= 20 hours = full day holiday, skip agent
+def is_on_holiday(activities):
+    """Return True if any activity spans >= 20 hours (i.e. a full-day holiday event)."""
     for a in activities:
         duration_hours = (a["end_time"] - a["start_time"]) / 3600
         if duration_hours >= 20:
             print(f"    Skipping — holiday detected (event spans {duration_hours:.0f}hrs)")
-            return None
+            return True
+    return False
 
-    all_starts = [a["start_time"] for a in activities]
-    all_ends   = [a["end_time"]   for a in activities]
-    shift_start_ts = min(all_starts)
-    shift_end_ts   = max(all_ends)
+def get_late_shift_bounds(d):
+    """Fixed bounds for the late shift: 10:00–19:00 Budapest."""
+    return (
+        int(datetime(d.year, d.month, d.day, 10, 0, tzinfo=BUDAPEST).timestamp()),
+        int(datetime(d.year, d.month, d.day, 19, 0, tzinfo=BUDAPEST).timestamp()),
+    )
 
-    # Sanity check: start must be 06:00-14:00, end must be 14:00-23:00
-    valid_start_min = int(datetime(d.year, d.month, d.day, 6,  0, tzinfo=BUDAPEST).timestamp())
-    valid_start_max = int(datetime(d.year, d.month, d.day, 14, 0, tzinfo=BUDAPEST).timestamp())
-    valid_end_min   = int(datetime(d.year, d.month, d.day, 14, 0, tzinfo=BUDAPEST).timestamp())
-    valid_end_max   = int(datetime(d.year, d.month, d.day, 23, 0, tzinfo=BUDAPEST).timestamp())
-
-    if not (valid_start_min <= shift_start_ts <= valid_start_max and
-            valid_end_min   <= shift_end_ts   <= valid_end_max):
-        print(f"    Warning: shift bounds look wrong "
-              f"({datetime.fromtimestamp(shift_start_ts, tz=BUDAPEST).strftime('%H:%M')}-"
-              f"{datetime.fromtimestamp(shift_end_ts, tz=BUDAPEST).strftime('%H:%M')}) "
-              f"-- defaulting to 09:00-18:00 Budapest")
-        return int(default_start.timestamp()), int(default_end.timestamp())
-
-    # Sanity check: shift must be at least 9 hours (likely GCal corruption if shorter)
-    shift_duration_hours = (shift_end_ts - shift_start_ts) / 3600
-    if shift_duration_hours < 9:
-        print(f"    Skipping — shift looks too short ({shift_duration_hours:.1f}hrs, likely GCal corruption)")
-        return None
-
-    return shift_start_ts, shift_end_ts
+def get_standard_shift_bounds(d):
+    """Fixed bounds for the standard shift: 09:00–18:00 Budapest."""
+    return (
+        int(datetime(d.year, d.month, d.day, 9, 0, tzinfo=BUDAPEST).timestamp()),
+        int(datetime(d.year, d.month, d.day, 18, 0, tzinfo=BUDAPEST).timestamp()),
+    )
 
 def schedule_gaps(agent_id, agent_name, event_type_id, activities, d, day_start_ts, day_end_ts, label, dry_run):
     """Fill gaps in the agent's schedule with the given event type."""
@@ -237,9 +213,9 @@ def schedule_gaps(agent_id, agent_name, event_type_id, activities, d, day_start_
         print(f"    → {label} gap {start_local}–{end_local} ({duration_mins} mins)")
         create_activity(agent_id, event_type_id, gap_start, gap_end, dry_run)
 
-def schedule_end_of_shift_esc(agent_id, agent_name, activities, d, dry_run):
-    """Book ESC in the last 30 minutes of the agent's shift."""
-    _, shift_end_ts = get_shift_bounds(activities, d)
+def schedule_end_of_shift_esc(agent_id, agent_name, d, dry_run):
+    """Book ESC in the last 30 minutes of the late shift (always 18:30–19:00 Budapest)."""
+    _, shift_end_ts = get_late_shift_bounds(d)
     esc_end_ts   = shift_end_ts
     esc_start_ts = esc_end_ts - (30 * 60)
 
@@ -259,8 +235,7 @@ def pick_allday_esc_agent(exclude_name, d, dry_run):
             continue
         # Skip agents on holiday
         activities = get_agent_activities(agent_id, d)
-        bounds = get_shift_bounds(activities, d)
-        if bounds is None:
+        if is_on_holiday(activities):
             print(f"      {name}: on holiday — skipping")
             continue
         if not dry_run:
@@ -272,6 +247,10 @@ def pick_allday_esc_agent(exclude_name, d, dry_run):
             print(f"      {name}: last all-day ESC {last.strftime('%d %b %Y')}")
         else:
             print(f"      {name}: no recent all-day ESC history")
+
+    if not candidates:
+        print(f"    ⚠ No available agents for all-day ESC — everyone on holiday or short shift!")
+        return None, None
 
     # Sort: no history first, then oldest first
     candidates.sort(key=lambda x: x[2] or date.min)
@@ -336,20 +315,18 @@ def main():
         # Fetch late agent's activities
         late_activities = get_agent_activities(late_id, d)
 
-        # Shift bounds for late agent (expect 10:00–19:00 Budapest)
-        shift_bounds = get_shift_bounds(late_activities, d)
-        if shift_bounds is None:
+        # Check for holiday
+        if is_on_holiday(late_activities):
             print(f"  ⚠ {late_name} is on holiday — skipping QC and end-of-shift ESC")
         else:
-            shift_start_ts, shift_end_ts = shift_bounds
-            shift_start_local = datetime.fromtimestamp(shift_start_ts, tz=BUDAPEST).strftime("%H:%M")
-            shift_end_local   = datetime.fromtimestamp(shift_end_ts,   tz=BUDAPEST).strftime("%H:%M")
-            print(f"  Shift: {shift_start_local}–{shift_end_local} Budapest")
+            # Always use fixed late shift bounds: 10:00–19:00 Budapest
+            shift_start_ts, shift_end_ts = get_late_shift_bounds(d)
+            print(f"  Shift: 10:00–19:00 Budapest (late)")
 
-            # ESC window = last 30 mins, so QC fills gaps up to 30 mins before shift end
+            # QC fills gaps up to 30 mins before shift end
             qc_end_ts = shift_end_ts - (30 * 60)
 
-            # 1. Question Channel in gaps (between shift start and 30 mins before end)
+            # 1. Question Channel in gaps
             print(f"\n  [1] Question Channel gaps for {late_name}:")
             schedule_gaps(
                 late_id, late_name, QC_EVENT_TYPE_ID,
@@ -360,27 +337,29 @@ def main():
 
             # 2. ESC at end of shift
             print(f"\n  [2] End-of-shift ESC for {late_name}:")
-            schedule_end_of_shift_esc(late_id, late_name, late_activities, d, dry_run)
+            schedule_end_of_shift_esc(late_id, late_name, d, dry_run)
 
         # 3. All-day ESC agent (least recent, not the late agent)
         print(f"\n  [3] Picking all-day ESC agent (excluding {late_name}):")
         allday_name, allday_id = pick_allday_esc_agent(late_name, d, dry_run)
+        if allday_name is None:
+            print(f"  ⚠ No all-day ESC agent available today — skipping")
+            print()
+            continue
         print(f"  All-day ESC agent: {allday_name}")
 
         allday_activities = get_agent_activities(allday_id, d)
-        allday_bounds = get_shift_bounds(allday_activities, d)
 
-        print(f"\n  [3] ESC gaps for {allday_name}:")
-        if allday_bounds is None:
-            print(f"    ⚠ {allday_name} is on holiday — skipping all-day ESC")
-        else:
-            allday_start_ts, allday_end_ts = allday_bounds
-            schedule_gaps(
-                allday_id, allday_name, ESC_EVENT_TYPE_ID,
-                allday_activities, d,
-                allday_start_ts, allday_end_ts,
-                "ESC", dry_run
-            )
+        # Always use fixed standard shift bounds: 09:00–18:00 Budapest
+        allday_start_ts, allday_end_ts = get_standard_shift_bounds(d)
+
+        print(f"\n  [3] ESC gaps for {allday_name} (09:00–18:00 Budapest):")
+        schedule_gaps(
+            allday_id, allday_name, ESC_EVENT_TYPE_ID,
+            allday_activities, d,
+            allday_start_ts, allday_end_ts,
+            "ESC", dry_run
+        )
 
         print()
 
