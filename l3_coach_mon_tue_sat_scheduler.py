@@ -1,5 +1,5 @@
 """
-L3 Coach Monday/Tuesday Scheduler
+L3 Coach Mon/Tue/Sat Scheduler
 
 For each Monday and Tuesday in the date range, this script:
 
@@ -11,8 +11,8 @@ For each Monday and Tuesday in the date range, this script:
    - Books ESC in any gaps in their schedule throughout the day
 
 Usage:
-    ASSEMBLED_API_KEY=sk_live_... python l3_coach_mon_tue_scheduler.py 2026-06-01 2026-06-30
-    ASSEMBLED_API_KEY=sk_live_... python l3_coach_mon_tue_scheduler.py 2026-06-01 2026-06-30 --dry-run
+    ASSEMBLED_API_KEY=sk_live_... python l3_coach_mon_tue_sat_scheduler.py 01/06/2026 30/06/2026
+    ASSEMBLED_API_KEY=sk_live_... python l3_coach_mon_tue_sat_scheduler.py 01/06/2026 30/06/2026 --dry-run
 """
 
 import os
@@ -63,6 +63,19 @@ def get_late_agent(week_num, day):
             return name, AGENTS[name]
         if day == "tue" and (i - 2) % 9 == (week_num - 1) % 9:
             return name, AGENTS[name]
+
+def get_saturday_agent(week_num):
+    """Return (name, agent_id) of the agent working Saturday in the given cycle week."""
+    for i, name in enumerate(AGENT_NAMES):
+        if i == (week_num - 1) % 9:  # sat_week = agent index (0-indexed)
+            return name, AGENTS[name]
+
+def get_saturday_shift_bounds(d):
+    """Fixed Saturday shift: 09:00–18:00 Budapest."""
+    return (
+        int(datetime(d.year, d.month, d.day, 9, 0, tzinfo=BUDAPEST).timestamp()),
+        int(datetime(d.year, d.month, d.day, 18, 0, tzinfo=BUDAPEST).timestamp()),
+    )
 
 def get_cycle_week(d):
     """Return 1-indexed week number within the 9-week cycle for a given date."""
@@ -289,8 +302,8 @@ def pick_allday_esc_agent(exclude_name, d, already_used=None, esc_history=None, 
 # DATE HELPERS
 # ---------------------------------------------------------------------------
 
-def get_mon_tue_in_range(start_date, end_date):
-    """Return list of (date, 'mon'/'tue') tuples for all Mon/Tue in range."""
+def get_mon_tue_sat_in_range(start_date, end_date):
+    """Return list of (date, 'mon'/'tue'/'sat') tuples for all Mon/Tue/Sat in range."""
     results = []
     d = start_date
     while d <= end_date:
@@ -298,6 +311,8 @@ def get_mon_tue_in_range(start_date, end_date):
             results.append((d, "mon"))
         elif d.weekday() == 1:
             results.append((d, "tue"))
+        elif d.weekday() == 5:
+            results.append((d, "sat"))
         d += timedelta(days=1)
     return results
 
@@ -310,7 +325,7 @@ def main():
     args    = [a for a in sys.argv[1:] if not a.startswith("--")]
 
     if len(args) < 2:
-        print("Usage: python l3_coach_mon_tue_scheduler.py START_DATE END_DATE [--dry-run]")
+        print("Usage: python l3_coach_mon_tue_sat_scheduler.py START_DATE END_DATE [--dry-run]")
         print("       Dates in DD/MM/YYYY format")
         sys.exit(1)
 
@@ -318,7 +333,7 @@ def main():
     end_date   = datetime.strptime(args[1], "%d/%m/%Y").date()
 
     print("=" * 60)
-    print(f"L3 Coach Mon/Tue Scheduler — {'DRY RUN' if dry_run else 'LIVE'}")
+    print(f"L3 Coach Mon/Tue/Sat Scheduler — {'DRY RUN' if dry_run else 'LIVE'}")
     print(f"Range: {start_date} → {end_date}")
     print(f"Schedule: {SCHEDULE_ID}")
     print("=" * 60)
@@ -329,8 +344,8 @@ def main():
             print("Aborted.")
             sys.exit(0)
 
-    days = get_mon_tue_in_range(start_date, end_date)
-    print(f"\nProcessing {len(days)} Mon/Tue day(s)...")
+    days = get_mon_tue_sat_in_range(start_date, end_date)
+    print(f"\nProcessing {len(days)} Mon/Tue/Sat day(s)...")
 
     # Pre-fetch ESC history for all agents once upfront
     print("Fetching ESC history for all agents...")
@@ -359,14 +374,37 @@ def main():
         if day_label == "mon":
             already_used_allday_esc = set()
         week_num = get_cycle_week(d)
-        day_name = "Monday" if day_label == "mon" else "Tuesday"
+        day_name = {"mon": "Monday", "tue": "Tuesday", "sat": "Saturday"}[day_label]
         print(f"── {day_name} {d.strftime('%d %b %Y')} (cycle week {week_num}) ──")
 
+        day_acts = all_day_activities[d]
+
+        # ── SATURDAY ──────────────────────────────────────────────────────────
+        if day_label == "sat":
+            sat_name, sat_id = get_saturday_agent(week_num)
+            print(f"  Saturday agent: {sat_name}")
+            sat_activities = day_acts[sat_name]
+
+            if is_on_holiday(sat_activities):
+                print(f"  ⚠ {sat_name} is on holiday — skipping Saturday ESC")
+            else:
+                sat_start_ts, sat_end_ts = get_saturday_shift_bounds(d)
+                print(f"  Shift: 09:00–18:00 Budapest (Saturday)")
+                print(f"
+  [SAT] ESC gaps for {sat_name}:")
+                schedule_gaps(
+                    sat_id, sat_name, ESC_EVENT_TYPE_ID,
+                    sat_activities, d,
+                    sat_start_ts, sat_end_ts,
+                    "ESC", dry_run
+                )
+            print()
+            continue
+
+        # ── MON / TUE ─────────────────────────────────────────────────────────
         late_name, late_id = get_late_agent(week_num, day_label)
         print(f"  Late agent: {late_name}")
 
-        # Use pre-fetched activities
-        day_acts = all_day_activities[d]
         late_activities = day_acts[late_name]
 
         # Check for holiday
@@ -381,7 +419,8 @@ def main():
             qc_end_ts = shift_end_ts - (30 * 60)
 
             # 1. Question Channel in gaps
-            print(f"\n  [1] Question Channel gaps for {late_name}:")
+            print(f"
+  [1] Question Channel gaps for {late_name}:")
             schedule_gaps(
                 late_id, late_name, QC_EVENT_TYPE_ID,
                 late_activities, d,
@@ -390,11 +429,13 @@ def main():
             )
 
             # 2. ESC at end of shift
-            print(f"\n  [2] End-of-shift ESC for {late_name}:")
+            print(f"
+  [2] End-of-shift ESC for {late_name}:")
             schedule_end_of_shift_esc(late_id, late_name, d, dry_run)
 
         # 3. All-day ESC agent (least recent, not the late agent)
-        print(f"\n  [3] Picking all-day ESC agent (excluding {late_name}):")
+        print(f"
+  [3] Picking all-day ESC agent (excluding {late_name}):")
         allday_name, allday_id, already_used_allday_esc = pick_allday_esc_agent(
             late_name, d,
             already_used=already_used_allday_esc,
@@ -414,7 +455,8 @@ def main():
         # Always use fixed standard shift bounds: 09:00–18:00 Budapest
         allday_start_ts, allday_end_ts = get_standard_shift_bounds(d)
 
-        print(f"\n  [3] ESC gaps for {allday_name} (09:00–18:00 Budapest):")
+        print(f"
+  [3] ESC gaps for {allday_name} (09:00–18:00 Budapest):")
         schedule_gaps(
             allday_id, allday_name, ESC_EVENT_TYPE_ID,
             allday_activities, d,
