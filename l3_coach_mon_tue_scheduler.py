@@ -224,14 +224,18 @@ def schedule_end_of_shift_esc(agent_id, agent_name, d, dry_run):
     print(f"    → ESC (end of shift) {start_local}–{end_local} Budapest")
     create_activity(agent_id, ESC_EVENT_TYPE_ID, esc_start_ts, esc_end_ts, dry_run)
 
-def pick_allday_esc_agent(exclude_name, d, dry_run):
+def pick_allday_esc_agent(exclude_name, d, dry_run, already_used=None):
     """
-    Pick the agent (excluding the late agent) who did all-day ESC least recently.
-    Returns (name, agent_id).
+    Pick the agent (excluding the late agent and anyone already used this run)
+    who did all-day ESC least recently. Returns (name, agent_id).
     """
+    already_used = already_used or set()
     candidates = []
     for name, agent_id in AGENTS.items():
         if name == exclude_name:
+            continue
+        if name in already_used:
+            print(f"      {name}: already done all-day ESC this run — skipping")
             continue
         # Skip agents on holiday
         activities = get_agent_activities(agent_id, d)
@@ -304,6 +308,8 @@ def main():
     days = get_mon_tue_in_range(start_date, end_date)
     print(f"\nProcessing {len(days)} Mon/Tue day(s)...\n")
 
+    already_used_allday_esc = set()  # track who's done all-day ESC this run
+
     for d, day_label in days:
         week_num = get_cycle_week(d)
         day_name = "Monday" if day_label == "mon" else "Tuesday"
@@ -341,12 +347,13 @@ def main():
 
         # 3. All-day ESC agent (least recent, not the late agent)
         print(f"\n  [3] Picking all-day ESC agent (excluding {late_name}):")
-        allday_name, allday_id = pick_allday_esc_agent(late_name, d, dry_run)
+        allday_name, allday_id = pick_allday_esc_agent(late_name, d, dry_run, already_used_allday_esc)
         if allday_name is None:
             print(f"  ⚠ No all-day ESC agent available today — skipping")
             print()
             continue
         print(f"  All-day ESC agent: {allday_name}")
+        already_used_allday_esc.add(allday_name)
 
         allday_activities = get_agent_activities(allday_id, d)
 
