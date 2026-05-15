@@ -390,8 +390,7 @@ def main():
             else:
                 sat_start_ts, sat_end_ts = get_saturday_shift_bounds(d)
                 print(f"  Shift: 09:00–18:00 Budapest (Saturday)")
-                print(f"
-  [SAT] ESC gaps for {sat_name}:")
+                print(f"\n  [SAT] ESC gaps for {sat_name}:")
                 schedule_gaps(
                     sat_id, sat_name, ESC_EVENT_TYPE_ID,
                     sat_activities, d,
@@ -419,8 +418,7 @@ def main():
             qc_end_ts = shift_end_ts - (30 * 60)
 
             # 1. Question Channel in gaps
-            print(f"
-  [1] Question Channel gaps for {late_name}:")
+            print(f"\n  [1] Question Channel gaps for {late_name}:")
             schedule_gaps(
                 late_id, late_name, QC_EVENT_TYPE_ID,
                 late_activities, d,
@@ -429,13 +427,11 @@ def main():
             )
 
             # 2. ESC at end of shift
-            print(f"
-  [2] End-of-shift ESC for {late_name}:")
+            print(f"\n  [2] End-of-shift ESC for {late_name}:")
             schedule_end_of_shift_esc(late_id, late_name, d, dry_run)
 
         # 3. All-day ESC agent (least recent, not the late agent)
-        print(f"
-  [3] Picking all-day ESC agent (excluding {late_name}):")
+        print(f"\n  [3] Picking all-day ESC agent (excluding {late_name}):")
         allday_name, allday_id, already_used_allday_esc = pick_allday_esc_agent(
             late_name, d,
             already_used=already_used_allday_esc,
@@ -455,8 +451,7 @@ def main():
         # Always use fixed standard shift bounds: 09:00–18:00 Budapest
         allday_start_ts, allday_end_ts = get_standard_shift_bounds(d)
 
-        print(f"
-  [3] ESC gaps for {allday_name} (09:00–18:00 Budapest):")
+        print(f"\n  [3] ESC gaps for {allday_name} (09:00–18:00 Budapest):")
         schedule_gaps(
             allday_id, allday_name, ESC_EVENT_TYPE_ID,
             allday_activities, d,
