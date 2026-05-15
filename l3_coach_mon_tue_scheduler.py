@@ -185,6 +185,13 @@ def get_shift_bounds(activities, d):
     if not activities:
         return int(default_start.timestamp()), int(default_end.timestamp())
 
+    # Check for holiday: any single event >= 20 hours = full day holiday, skip agent
+    for a in activities:
+        duration_hours = (a["end_time"] - a["start_time"]) / 3600
+        if duration_hours >= 20:
+            print(f"    Skipping — holiday detected (event spans {duration_hours:.0f}hrs)")
+            return None
+
     all_starts = [a["start_time"] for a in activities]
     all_ends   = [a["end_time"]   for a in activities]
     shift_start_ts = min(all_starts)
@@ -240,6 +247,12 @@ def pick_allday_esc_agent(exclude_name, d, dry_run):
     candidates = []
     for name, agent_id in AGENTS.items():
         if name == exclude_name:
+            continue
+        # Skip agents on holiday
+        activities = get_agent_activities(agent_id, d)
+        bounds = get_shift_bounds(activities, d)
+        if bounds is None:
+            print(f"      {name}: on holiday — skipping")
             continue
         if not dry_run:
             last = get_last_allday_esc_date(agent_id, d)
@@ -315,26 +328,30 @@ def main():
         late_activities = get_agent_activities(late_id, d)
 
         # Shift bounds for late agent (expect 10:00–19:00 Budapest)
-        shift_start_ts, shift_end_ts = get_shift_bounds(late_activities, d)
-        shift_start_local = datetime.fromtimestamp(shift_start_ts, tz=BUDAPEST).strftime("%H:%M")
-        shift_end_local   = datetime.fromtimestamp(shift_end_ts,   tz=BUDAPEST).strftime("%H:%M")
-        print(f"  Shift: {shift_start_local}–{shift_end_local} Budapest")
+        shift_bounds = get_shift_bounds(late_activities, d)
+        if shift_bounds is None:
+            print(f"  ⚠ {late_name} is on holiday — skipping QC and end-of-shift ESC")
+        else:
+            shift_start_ts, shift_end_ts = shift_bounds
+            shift_start_local = datetime.fromtimestamp(shift_start_ts, tz=BUDAPEST).strftime("%H:%M")
+            shift_end_local   = datetime.fromtimestamp(shift_end_ts,   tz=BUDAPEST).strftime("%H:%M")
+            print(f"  Shift: {shift_start_local}–{shift_end_local} Budapest")
 
-        # ESC window = last 30 mins, so QC fills gaps up to 30 mins before shift end
-        qc_end_ts = shift_end_ts - (30 * 60)
+            # ESC window = last 30 mins, so QC fills gaps up to 30 mins before shift end
+            qc_end_ts = shift_end_ts - (30 * 60)
 
-        # 1. Question Channel in gaps (between shift start and 30 mins before end)
-        print(f"\n  [1] Question Channel gaps for {late_name}:")
-        schedule_gaps(
-            late_id, late_name, QC_EVENT_TYPE_ID,
-            late_activities, d,
-            shift_start_ts, qc_end_ts,
-            "QC", dry_run
-        )
+            # 1. Question Channel in gaps (between shift start and 30 mins before end)
+            print(f"\n  [1] Question Channel gaps for {late_name}:")
+            schedule_gaps(
+                late_id, late_name, QC_EVENT_TYPE_ID,
+                late_activities, d,
+                shift_start_ts, qc_end_ts,
+                "QC", dry_run
+            )
 
-        # 2. ESC at end of shift
-        print(f"\n  [2] End-of-shift ESC for {late_name}:")
-        schedule_end_of_shift_esc(late_id, late_name, late_activities, d, dry_run)
+            # 2. ESC at end of shift
+            print(f"\n  [2] End-of-shift ESC for {late_name}:")
+            schedule_end_of_shift_esc(late_id, late_name, late_activities, d, dry_run)
 
         # 3. All-day ESC agent (least recent, not the late agent)
         print(f"\n  [3] Picking all-day ESC agent (excluding {late_name}):")
@@ -342,15 +359,19 @@ def main():
         print(f"  All-day ESC agent: {allday_name}")
 
         allday_activities = get_agent_activities(allday_id, d)
-        allday_start_ts, allday_end_ts = get_shift_bounds(allday_activities, d)
+        allday_bounds = get_shift_bounds(allday_activities, d)
 
         print(f"\n  [3] ESC gaps for {allday_name}:")
-        schedule_gaps(
-            allday_id, allday_name, ESC_EVENT_TYPE_ID,
-            allday_activities, d,
-            allday_start_ts, allday_end_ts,
-            "ESC", dry_run
-        )
+        if allday_bounds is None:
+            print(f"    ⚠ {allday_name} is on holiday — skipping all-day ESC")
+        else:
+            allday_start_ts, allday_end_ts = allday_bounds
+            schedule_gaps(
+                allday_id, allday_name, ESC_EVENT_TYPE_ID,
+                allday_activities, d,
+                allday_start_ts, allday_end_ts,
+                "ESC", dry_run
+            )
 
         print()
 
