@@ -32,7 +32,8 @@ SCHEDULE_ID = "ce63792c-57e1-41ac-85a5-9f09b230c791"  # test schedule
 BUDAPEST    = ZoneInfo("Europe/Budapest")
 
 QC_EVENT_TYPE_ID  = "d421c903-4ac6-4c40-ae21-00b00c6a79c2"  # Question Channel
-ESC_EVENT_TYPE_ID = "1a64d3a1-dff6-40c1-b223-3928417f6ffb"  # ESC
+ESC_EVENT_TYPE_ID  = "1a64d3a1-dff6-40c1-b223-3928417f6ffb"  # ESC
+CHAT_CC_TYPE_ID    = "5bfe27ca-af9a-478b-83a9-26883519ce73"  # Chat - Customer Care (treated as gap)
 
 # Cycle anchor: Monday 2 June 2026 = Week 1
 CYCLE_ANCHOR = date(2026, 6, 1)
@@ -93,7 +94,9 @@ def get_agent_activities(agent_id, d):
         auth=ASSEMBLED_AUTH,
     )
     resp.raise_for_status()
-    return list(resp.json().get("activities", {}).values())
+    activities = list(resp.json().get("activities", {}).values())
+    # Strip Chat - Customer Care events — treat as gaps for QC/ESC filling
+    return [a for a in activities if a.get("type_id") != CHAT_CC_TYPE_ID]
 
 def get_last_allday_esc_date(agent_id, before_date):
     """
