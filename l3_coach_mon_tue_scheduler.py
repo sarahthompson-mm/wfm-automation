@@ -214,6 +214,12 @@ def get_shift_bounds(activities, d):
               f"-- defaulting to 09:00-18:00 Budapest")
         return int(default_start.timestamp()), int(default_end.timestamp())
 
+    # Sanity check: shift must be at least 9 hours (likely GCal corruption if shorter)
+    shift_duration_hours = (shift_end_ts - shift_start_ts) / 3600
+    if shift_duration_hours < 9:
+        print(f"    Skipping — shift looks too short ({shift_duration_hours:.1f}hrs, likely GCal corruption)")
+        return None
+
     return shift_start_ts, shift_end_ts
 
 def schedule_gaps(agent_id, agent_name, event_type_id, activities, d, day_start_ts, day_end_ts, label, dry_run):
