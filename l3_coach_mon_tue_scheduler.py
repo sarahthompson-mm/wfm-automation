@@ -82,12 +82,18 @@ def get_agent_activities(agent_id, d):
     start_ts = int(datetime(d.year, d.month, d.day, 0, 0, tzinfo=BUDAPEST).timestamp())
     end_ts   = int(datetime(d.year, d.month, d.day, 23, 59, tzinfo=BUDAPEST).timestamp())
     resp = requests.get(
-        f"{BASE_URL}/agents/{agent_id}/activities",
-        params={"start_time": start_ts, "end_time": end_ts, "schedule_id": SCHEDULE_ID},
+        f"{BASE_URL}/activities",
+        params={
+            "agents": agent_id,
+            "start_time": start_ts,
+            "end_time": end_ts,
+            "schedule_id": SCHEDULE_ID,
+            "return_full_schedule": "true",
+        },
         auth=ASSEMBLED_AUTH,
     )
     resp.raise_for_status()
-    return resp.json().get("activities", [])
+    return list(resp.json().get("activities", {}).values())
 
 def get_last_allday_esc_date(agent_id, before_date):
     """
@@ -97,12 +103,18 @@ def get_last_allday_esc_date(agent_id, before_date):
     end_ts   = int(datetime(before_date.year, before_date.month, before_date.day, 0, 0, tzinfo=BUDAPEST).timestamp())
     start_ts = end_ts - (18 * 7 * 86400)
     resp = requests.get(
-        f"{BASE_URL}/agents/{agent_id}/activities",
-        params={"start_time": start_ts, "end_time": end_ts, "schedule_id": SCHEDULE_ID},
+        f"{BASE_URL}/activities",
+        params={
+            "agents": agent_id,
+            "start_time": start_ts,
+            "end_time": end_ts,
+            "schedule_id": SCHEDULE_ID,
+            "return_full_schedule": "true",
+        },
         auth=ASSEMBLED_AUTH,
     )
     resp.raise_for_status()
-    activities = resp.json().get("activities", [])
+    activities = list(resp.json().get("activities", {}).values())
     esc_activities = [a for a in activities if a.get("event_type_id") == ESC_EVENT_TYPE_ID]
     if not esc_activities:
         return None
