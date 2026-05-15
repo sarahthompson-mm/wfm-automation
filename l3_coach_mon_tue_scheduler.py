@@ -238,10 +238,8 @@ def build_candidates(exclude_name, d, dry_run, skip_names=None):
         if is_on_holiday(activities):
             print(f"      {name}: on holiday — skipping")
             continue
-        if not dry_run:
-            last = get_last_allday_esc_date(agent_id, d)
-        else:
-            last = None
+        # Always check real history — dry run only skips writing, not reading
+        last = get_last_allday_esc_date(agent_id, d)
         candidates.append((name, agent_id, last))
         if last:
             print(f"      {name}: last all-day ESC {last.strftime('%d %b %Y')}")
