@@ -175,16 +175,36 @@ def get_gaps(activities, day_start_ts, day_end_ts, min_gap_mins=5):
 def get_shift_bounds(activities, d):
     """
     Return (shift_start_ts, shift_end_ts) based on the earliest and latest
-    productive activity on the day. Falls back to 09:00–18:00 Budapest if no activities.
+    activity on the day. Falls back to 09:00-18:00 Budapest if no activities
+    or if derived bounds look nonsensical (e.g. dodgy GCal events bleeding
+    into midnight). Valid shift: start 06:00-14:00, end 14:00-23:00 Budapest.
     """
+    default_start = datetime(d.year, d.month, d.day, 9, 0, tzinfo=BUDAPEST)
+    default_end   = datetime(d.year, d.month, d.day, 18, 0, tzinfo=BUDAPEST)
+
     if not activities:
-        start = datetime(d.year, d.month, d.day, 9, 0, tzinfo=BUDAPEST)
-        end   = datetime(d.year, d.month, d.day, 18, 0, tzinfo=BUDAPEST)
-        return int(start.timestamp()), int(end.timestamp())
+        return int(default_start.timestamp()), int(default_end.timestamp())
 
     all_starts = [a["start_time"] for a in activities]
     all_ends   = [a["end_time"]   for a in activities]
-    return min(all_starts), max(all_ends)
+    shift_start_ts = min(all_starts)
+    shift_end_ts   = max(all_ends)
+
+    # Sanity check: start must be 06:00-14:00, end must be 14:00-23:00
+    valid_start_min = int(datetime(d.year, d.month, d.day, 6,  0, tzinfo=BUDAPEST).timestamp())
+    valid_start_max = int(datetime(d.year, d.month, d.day, 14, 0, tzinfo=BUDAPEST).timestamp())
+    valid_end_min   = int(datetime(d.year, d.month, d.day, 14, 0, tzinfo=BUDAPEST).timestamp())
+    valid_end_max   = int(datetime(d.year, d.month, d.day, 23, 0, tzinfo=BUDAPEST).timestamp())
+
+    if not (valid_start_min <= shift_start_ts <= valid_start_max and
+            valid_end_min   <= shift_end_ts   <= valid_end_max):
+        print(f"    Warning: shift bounds look wrong "
+              f"({datetime.fromtimestamp(shift_start_ts, tz=BUDAPEST).strftime('%H:%M')}-"
+              f"{datetime.fromtimestamp(shift_end_ts, tz=BUDAPEST).strftime('%H:%M')}) "
+              f"-- defaulting to 09:00-18:00 Budapest")
+        return int(default_start.timestamp()), int(default_end.timestamp())
+
+    return shift_start_ts, shift_end_ts
 
 def schedule_gaps(agent_id, agent_name, event_type_id, activities, d, day_start_ts, day_end_ts, label, dry_run):
     """Fill gaps in the agent's schedule with the given event type."""
