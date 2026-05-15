@@ -72,8 +72,10 @@ def get_cycle_week(d):
 # API HELPERS
 # ---------------------------------------------------------------------------
 
+ASSEMBLED_AUTH = (API_KEY, "")
+
 def headers():
-    return {"x-assembled-api-key": API_KEY, "Content-Type": "application/json"}
+    return {"Content-Type": "application/json"}
 
 def get_agent_activities(agent_id, d):
     """Fetch all activities for an agent on a given date (returns list of activity dicts)."""
@@ -82,7 +84,7 @@ def get_agent_activities(agent_id, d):
     resp = requests.get(
         f"{BASE_URL}/agents/{agent_id}/activities",
         params={"start_time": start_ts, "end_time": end_ts, "schedule_id": SCHEDULE_ID},
-        headers=headers(),
+        auth=ASSEMBLED_AUTH,
     )
     resp.raise_for_status()
     return resp.json().get("activities", [])
@@ -97,7 +99,7 @@ def get_last_allday_esc_date(agent_id, before_date):
     resp = requests.get(
         f"{BASE_URL}/agents/{agent_id}/activities",
         params={"start_time": start_ts, "end_time": end_ts, "schedule_id": SCHEDULE_ID},
-        headers=headers(),
+        auth=ASSEMBLED_AUTH,
     )
     resp.raise_for_status()
     activities = resp.json().get("activities", [])
@@ -124,7 +126,7 @@ def create_activity(agent_id, event_type_id, start_ts, end_ts, dry_run=False):
     resp = requests.post(
         f"{BASE_URL}/activities",
         json=payload,
-        headers=headers(),
+        auth=ASSEMBLED_AUTH,
     )
     resp.raise_for_status()
     time.sleep(0.25)
