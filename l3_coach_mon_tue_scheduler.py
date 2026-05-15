@@ -73,7 +73,7 @@ def get_cycle_week(d):
 # ---------------------------------------------------------------------------
 
 def headers():
-    return {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+    return {"x-assembled-api-key": API_KEY, "Content-Type": "application/json"}
 
 def get_agent_activities(agent_id, d):
     """Fetch all activities for an agent on a given date (returns list of activity dicts)."""
