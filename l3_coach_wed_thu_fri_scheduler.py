@@ -273,6 +273,8 @@ def spread_slots(all_slots, n, shift_start_ts, shift_end_ts):
 def book_agent_a(agent_id, agent_name, activities, d, dry_run):
     """
     Agent A pattern: 45 mins at start of shift + 2 x 45 mins spread through rest of day.
+    The 2 remaining slots are targeted at the middle and last third of the shift.
+    Falls back to next available if no slot found in the preferred segment.
     """
     shift_start_ts, shift_end_ts = get_standard_shift_bounds(d)
     slot_secs = ESC_SLOT_MINS * 60
@@ -283,10 +285,39 @@ def book_agent_a(agent_id, agent_name, activities, d, dry_run):
     print(f"    → ESC slot 1 (start of shift): {datetime.fromtimestamp(slot1_start, tz=BUDAPEST).strftime('%H:%M')}–{datetime.fromtimestamp(slot1_end, tz=BUDAPEST).strftime('%H:%M')} Budapest")
     create_activity(agent_id, slot1_start, slot1_end, dry_run)
 
-    # Slots 2 & 3: spread through rest of shift (after first 45 mins), avoiding lunch
-    remaining_slots = find_free_slots(activities, shift_start_ts, shift_end_ts,
-                                      ESC_SLOT_MINS, exclude_start_mins=ESC_SLOT_MINS)
-    chosen = spread_slots(remaining_slots, 2, shift_start_ts + slot_secs, shift_end_ts)
+    # Remaining window: after first slot to end of shift
+    remaining_start = shift_start_ts + slot_secs
+    remaining_secs  = shift_end_ts - remaining_start
+    third           = remaining_secs // 3
+
+    # Target: slot 2 in middle third, slot 3 in final third
+    seg2_start = remaining_start + third
+    seg2_end   = remaining_start + (2 * third)
+    seg3_start = remaining_start + (2 * third)
+    seg3_end   = shift_end_ts
+
+    all_remaining = find_free_slots(activities, shift_start_ts, shift_end_ts,
+                                    ESC_SLOT_MINS, exclude_start_mins=ESC_SLOT_MINS)
+
+    def pick_from_segment(seg_s, seg_e, fallback_slots):
+        """Pick first slot in segment, or fall back to any remaining slot."""
+        for s, e in fallback_slots:
+            if seg_s <= s < seg_e:
+                return (s, e)
+        # Fallback: first available slot not already chosen
+        return fallback_slots[0] if fallback_slots else None
+
+    chosen = []
+    remaining_pool = list(all_remaining)
+
+    slot2 = pick_from_segment(seg2_start, seg2_end, remaining_pool)
+    if slot2:
+        chosen.append(slot2)
+        remaining_pool = [(s, e) for s, e in remaining_pool if s != slot2[0]]
+
+    slot3 = pick_from_segment(seg3_start, seg3_end, remaining_pool)
+    if slot3:
+        chosen.append(slot3)
 
     if len(chosen) < 2:
         print(f"    ⚠ Could only find {len(chosen)} remaining slot(s) for {agent_name} — booking what we can")
