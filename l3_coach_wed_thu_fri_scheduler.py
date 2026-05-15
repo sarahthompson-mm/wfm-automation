@@ -99,6 +99,7 @@ def get_agent_activities(agent_id, d):
         auth=ASSEMBLED_AUTH,
     )
     resp.raise_for_status()
+    time.sleep(0.5)  # avoid rate limiting on large date ranges
     return list(resp.json().get("activities", {}).values())
 
 def fetch_esc_history(start_date):
