@@ -123,11 +123,11 @@ def get_last_allday_esc_date(agent_id, before_date):
 
 def create_activity(agent_id, event_type_id, start_ts, end_ts, dry_run=False):
     payload = {
-        "agent_id":      agent_id,
-        "event_type_id": event_type_id,
-        "start_time":    start_ts,
-        "end_time":      end_ts,
-        "schedule_id":   SCHEDULE_ID,
+        "agent_id":    agent_id,
+        "type_id":     event_type_id,
+        "start_time":  start_ts,
+        "end_time":    end_ts,
+        "schedule_id": SCHEDULE_ID,
     }
     if dry_run:
         start_local = datetime.fromtimestamp(start_ts, tz=BUDAPEST).strftime("%H:%M")
